@@ -26,6 +26,7 @@ TIMEZONE = "Europe/Madrid"
 MAX_WORKERS = 3
 TELEGRAM_BATCH_SIZE = 10
 
+
 def load_env_file(env_path: Path) -> None:
     """Carga variables desde .env limpiando comentarios inline y espacios."""
     if not env_path.is_file():
@@ -37,10 +38,9 @@ def load_env_file(env_path: Path) -> None:
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip()
-        # Si está entre comillas, extraer solo lo de dentro; si no, quitar comentarios #
-        if (value.startswith('"') and '"' in value[1:]):
+        if value.startswith('"') and '"' in value[1:]:
             value = value[1:value.index('"', 1)]
-        elif (value.startswith("'") and "'" in value[1:]):
+        elif value.startswith("'") and "'" in value[1:]:
             value = value[1:value.index("'", 1)]
         else:
             value = value.split("#", 1)[0].strip()
@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("-r", "--range", default="6h", help="Rango temporal (ej: 6h, 24h, 7d). Default: 6h")
     parser.add_argument("-c", "--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Ruta a targets.json")
-    parser.add_argument("--dry-run", action="store_true", help="Renderiza las imágenes pero no las envía a Telegram")
+    parser.add_argument("--dry-run", action="store_true", help="Renderiza las imágenes pero no envía a Telegram ni push")
     return parser.parse_args()
 
 
@@ -143,6 +143,28 @@ def send_telegram_album(bot_token: str, target_cfg: dict, image_paths: list[Path
     return all_ok
 
 
+def send_push_notifications(name: str, target_cfg: dict) -> None:
+    """Envía pings HTTP GET a las URLs de monitorización (Uptime Kuma, Cronitor, etc.) configuradas."""
+    push_env_vars = target_cfg.get("push_urls_env", [])
+    if not push_env_vars:
+        return
+
+    for env_var in push_env_vars:
+        push_url = os.getenv(env_var)
+        if not push_url:
+            logger.warning(f"[{name}] Variable de entorno '{env_var}' no definida o vacía; se omite push.")
+            continue
+
+        try:
+            resp = requests.get(push_url, timeout=15)
+            if 200 <= resp.status_code < 300:
+                logger.info(f"[{name}] Push OK -> {env_var} (HTTP {resp.status_code})")
+            else:
+                logger.warning(f"[{name}] Push falló -> {env_var} (HTTP {resp.status_code})")
+        except requests.RequestException as exc:
+            logger.warning(f"[{name}] Error de red en push -> {env_var}: {exc}")
+
+
 def process_target(name: str, target_cfg: dict, grafana_url: str, grafana_token: str, args: argparse.Namespace) -> bool:
     panel_ids = target_cfg["panel_ids"]
     bot_env_var = target_cfg.get("bot_token_env", "TELEGRAM_BOT_TOKEN")
@@ -180,7 +202,10 @@ def process_target(name: str, target_cfg: dict, grafana_url: str, grafana_token:
             logger.info(f"[{name}] --dry-run completado ({len(ordered_images)}/{len(panel_ids)} paneles OK).")
             return True
 
-        return send_telegram_album(bot_token, target_cfg, ordered_images, args.range)
+        sent_ok = send_telegram_album(bot_token, target_cfg, ordered_images, args.range)
+        if sent_ok:
+            send_push_notifications(name, target_cfg)
+        return sent_ok
 
 
 def main() -> int:
@@ -218,4 +243,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-# aa

@@ -7,6 +7,21 @@
     "panel_ids": [1, 2, 3, 4],
     "width": 1200,
     "height": 600,
-    "scale": 2
+    "scale": 2,
+    "push_urls_env": [
+      "UPTIME_KUMA_1",
+      "CRONITOR_URL"
+    ]
+  },
+  "servidor_secundario": {
+    "title": "Servidor Secundario - Métricas",
+    "dashboard_uid": "another_dashboard_uid",
+    "dashboard_slug": "server-metrics",
+    "chat_id": "@another_telegram_channel",
+    "panel_ids": [10, 12, 15],
+    "width": 1200,
+    "height": 600,
+    "scale": 2,
+    "push_urls_env": []
   }
 }

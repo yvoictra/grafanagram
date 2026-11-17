@@ -1,6 +1,6 @@
 # Grafanagram
 
-Herramienta en Python para renderizar paneles individuales de **Grafana** en alta resolución mediante `grafana-image-renderer` y enviarlos agrupados como álbum a canales o chats de **Telegram**.
+Herramienta en Python para renderizar paneles individuales de **Grafana** en alta resolución mediante `grafana-image-renderer` y enviarlos agrupados como álbum a canales o chats de **Telegram**, con soporte opcional para notificaciones **Push** (Uptime Kuma, Cronitor, Healthchecks, etc.).
 
 Diseñado para ejecutarse de forma desatendida desde `cron` o `systemd`, soportando múltiples dashboards y destinos mediante un fichero de configuración declarativo (`targets.json`).
 
@@ -10,10 +10,11 @@ Diseñado para ejecutarse de forma desatendida desde `cron` o `systemd`, soporta
 
 * **Arquitectura multi-target:** Gestiona múltiples dashboards, canales de Telegram y listas de paneles desde un único archivo `targets.json`.
 * **Renderizado concurrente:** Descarga paneles en paralelo mediante `ThreadPoolExecutor` manteniendo el orden exacto definido en la configuración.
-* **Gestión segura de credenciales:** Carga variables de entorno desde `.env` sin dependencias externas ni secretos en el código.
+* **Monitorización Push (0 a X endpoints):** Permite notificar opcionalmente a una o varias instancias de **Uptime Kuma**, **Cronitor** o servicios compatibles tras cada envío exitoso a Telegram.
+* **Gestión segura de credenciales:** Carga variables de entorno desde `.env` sin dependencias externas ni secretos expuestos en el código o en los logs.
 * **Limpieza automática:** Utiliza directorios temporales aislados (`tempfile`) que se eliminan automáticamente al finalizar, evitando colisiones entre ejecuciones simultáneas.
 * **Soporte nativo para límites de Telegram:** Divide automáticamente los envíos en lotes de hasta 10 imágenes (`sendMediaGroup`).
-* **Modo de prueba (`--dry-run`):** Permite validar el renderizado contra Grafana sin enviar mensajes reales a Telegram.
+* **Modo de prueba (`--dry-run`):** Permite validar el renderizado contra Grafana sin enviar mensajes reales a Telegram ni disparar pings de monitorización.
 
 ---
 
@@ -59,18 +60,23 @@ Diseñado para ejecutarse de forma desatendida desde `cron` o `systemd`, soporta
    cp .env.example .env
    chmod 600 .env
    ```
-   Edita `.env` con tus credenciales:
+   Edita `.env` con tus credenciales y URLs de push (si las utilizas):
    ```env
    GRAFANA_URL="[http://127.0.0.1:3000](http://127.0.0.1:3000)"
    GRAFANA_TOKEN="glsa_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
    TELEGRAM_BOT_TOKEN="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+
+   # Opcional: URLs de monitorización Push (Uptime Kuma, Cronitor, etc.)
+   UPTIME_KUMA_1="[https://status1.example.com/api/push/xxxxxxxx?status=up&msg=OK&ping=](https://status1.example.com/api/push/xxxxxxxx?status=up&msg=OK&ping=)"
+   UPTIME_KUMA_2="[https://status2.example.com/api/push/yyyyyyyy?status=up&msg=OK&ping=](https://status2.example.com/api/push/yyyyyyyy?status=up&msg=OK&ping=)"
+   CRONITOR_URL="[https://cronitor.link/p/zzzzzzzz/grafana-export](https://cronitor.link/p/zzzzzzzz/grafana-export)"
    ```
 
 3. **Define tus objetivos en `targets.json`:**
    ```bash
    cp targets.example.json targets.json
    ```
-   Edita `targets.json` adaptando los UIDs de dashboard, IDs de panel y canales de Telegram:
+   Edita `targets.json` adaptando los UIDs de dashboard, IDs de panel, canales de Telegram y variables de push opcionales:
    ```json
    {
      "nodo_principal": {
@@ -81,12 +87,19 @@ Diseñado para ejecutarse de forma desatendida desde `cron` o `systemd`, soporta
        "panel_ids": [1, 2, 4, 8],
        "width": 1200,
        "height": 600,
-       "scale": 2
+       "scale": 2,
+       "push_urls_env": [
+         "UPTIME_KUMA_1",
+         "UPTIME_KUMA_2",
+         "CRONITOR_URL"
+       ]
      }
    }
    ```
 
-   > **Nota:** Si deseas utilizar un bot de Telegram distinto para un target concreto, añade la clave opcional `"bot_token_env": "OTRA_VARIABLE_EN_ENV"` dentro de su bloque en `targets.json`.
+   > **Notas opcionales:**
+   > * `push_urls_env` admite de `0` a `N` nombres de variables definidas en `.env`. Si se omite o se deja vacío (`[]`), no se enviará ninguna notificación push.
+   > * Si deseas utilizar un bot de Telegram distinto para un target concreto, añade `"bot_token_env": "OTRA_VARIABLE_EN_ENV"` dentro de su bloque en `targets.json`.
 
 ---
 
@@ -105,7 +118,7 @@ Diseñado para ejecutarse de forma desatendida desde `cron` o `systemd`, soporta
 # Ejecutar todos los targets definidos en targets.json
 /opt/grafanagram/grafanagram.py --all --range 24h
 
-# Probar el renderizado sin enviar nada a Telegram
+# Probar el renderizado sin enviar nada a Telegram ni ejecutar pushes
 /opt/grafanagram/grafanagram.py --all --range 6h --dry-run
 ```
 
@@ -117,7 +130,7 @@ Diseñado para ejecutarse de forma desatendida desde `cron` o `systemd`, soporta
 | `--all` | Procesa secuencialmente todos los targets de `targets.json`. | `False` |
 | `-r`, `--range` | Ventana de tiempo hacia atrás (`6h`, `12h`, `24h`, `7d`, `30d`). | `6h` |
 | `-c`, `--config` | Ruta alternativa al fichero de configuración JSON. | `./targets.json` |
-| `--dry-run` | Renderiza las imágenes pero omite el envío a Telegram. | `False` |
+| `--dry-run` | Renderiza las imágenes pero omite el envío a Telegram y los pings push. | `False` |
 
 ---
 
@@ -162,45 +175,6 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
     shm_size: "1gb"
-```
-
----
-
-## Plantillas de configuración incluidas
-
-### `.gitignore`
-
-```gitignore
-.env
-targets.json
-__pycache__/
-*.py[cod]
-*.log
-```
-
-### `.env.example`
-
-```env
-GRAFANA_URL="[http://127.0.0.1:3000](http://127.0.0.1:3000)"
-GRAFANA_TOKEN="glsa_your_grafana_service_account_token"
-TELEGRAM_BOT_TOKEN="123456789:your_telegram_bot_token"
-```
-
-### `targets.example.json`
-
-```json
-{
-  "home_assistant": {
-    "title": "Home Assistant - Estadísticas",
-    "dashboard_uid": "your_dashboard_uid",
-    "dashboard_slug": "home-assistant",
-    "chat_id": "@your_telegram_channel",
-    "panel_ids": [1, 2, 3, 4],
-    "width": 1200,
-    "height": 600,
-    "scale": 2
-  }
-}
 ```
 
 ---
